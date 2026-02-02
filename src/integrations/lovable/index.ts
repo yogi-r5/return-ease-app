@@ -2,12 +2,22 @@
 
 import { createLovableAuth } from "@lovable.dev/cloud-auth-js";
 import { supabase } from "../supabase/client";
-const lovableAuth = createLovableAuth({});
+
+// Lazy initialize to avoid React hook issues at module load time
+let lovableAuth: ReturnType<typeof createLovableAuth> | null = null;
+
+const getLovableAuth = () => {
+  if (!lovableAuth) {
+    lovableAuth = createLovableAuth({});
+  }
+  return lovableAuth;
+};
 
 export const lovable = {
   auth: {
     signInWithOAuth: async (provider: "google" | "apple", opts?: { redirect_uri?: string }) => {
-      const result = await lovableAuth.signInWithOAuth(provider, {
+      const auth = getLovableAuth();
+      const result = await auth.signInWithOAuth(provider, {
         ...opts,
       });
 
