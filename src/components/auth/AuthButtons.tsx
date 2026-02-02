@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Smartphone } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { lovable } from "@/integrations/lovable";
 import { toast } from "@/hooks/use-toast";
 import PhoneAuthModal from "./PhoneAuthModal";
 
@@ -33,13 +33,10 @@ export default function AuthButtons() {
   const handleGoogleSignIn = async () => {
     setIsLoading("google");
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: window.location.origin,
-        },
+      const result = await lovable.auth.signInWithOAuth("google", {
+        redirect_uri: window.location.origin,
       });
-      if (error) throw error;
+      if (result.error) throw result.error;
     } catch (error: any) {
       toast({
         title: "Sign in failed",
