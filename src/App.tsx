@@ -24,6 +24,8 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/new-return" element={<NewReturn />} />
           <Route path="/success" element={<Success />} />
+          <Route path="/admin" element={<Admin />} />
+          <Route path="/driver/:token" element={<DriverBatch />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

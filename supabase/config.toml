@@ -2,3 +2,9 @@ project_id = "cdmcocfdakuligkjjoyn"
 
 [functions.create-payment]
 verify_jwt = false
+
+[functions.check-batches]
+verify_jwt = false
+
+[functions.driver-batch]
+verify_jwt = false
