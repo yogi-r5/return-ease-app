@@ -14,8 +14,69 @@ export type Database = {
   }
   public: {
     Tables: {
+      batch_returns: {
+        Row: {
+          batch_id: string
+          id: string
+          return_id: string
+        }
+        Insert: {
+          batch_id: string
+          id?: string
+          return_id: string
+        }
+        Update: {
+          batch_id?: string
+          id?: string
+          return_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "batch_returns_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "delivery_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "batch_returns_return_id_fkey"
+            columns: ["return_id"]
+            isOneToOne: true
+            referencedRelation: "returns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      delivery_batches: {
+        Row: {
+          access_token: string
+          building_address: string
+          created_at: string
+          delivery_api_response: Json | null
+          id: string
+          status: string
+        }
+        Insert: {
+          access_token?: string
+          building_address: string
+          created_at?: string
+          delivery_api_response?: Json | null
+          id?: string
+          status?: string
+        }
+        Update: {
+          access_token?: string
+          building_address?: string
+          created_at?: string
+          delivery_api_response?: Json | null
+          id?: string
+          status?: string
+        }
+        Relationships: []
+      }
       returns: {
         Row: {
+          building_address: string | null
           created_at: string
           deadline: string
           guest_email: string | null
@@ -29,6 +90,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          building_address?: string | null
           created_at?: string
           deadline: string
           guest_email?: string | null
@@ -42,6 +104,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          building_address?: string | null
           created_at?: string
           deadline?: string
           guest_email?: string | null
@@ -56,14 +119,39 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
+      app_role: "admin" | "driver" | "user"
       return_status:
         | "in_basket"
         | "courier_assigned"
@@ -196,6 +284,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      app_role: ["admin", "driver", "user"],
       return_status: [
         "in_basket",
         "courier_assigned",
