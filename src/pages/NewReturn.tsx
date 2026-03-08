@@ -86,8 +86,9 @@ export default function NewReturn() {
       const returnIds: string[] = [];
 
       for (const item of items) {
-        // Upload label to storage
-        const fileName = `${Date.now()}-${item.labelFile!.name}`;
+        // Upload label to storage (sanitize filename for storage)
+        const safeName = item.labelFile!.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const fileName = `${Date.now()}-${safeName}`;
         const { error: uploadError } = await supabase.storage
           .from("return-labels")
           .upload(fileName, item.labelFile!);
