@@ -12,6 +12,7 @@ export default function NewReturn() {
 
   const [user, setUser] = useState<any>(null);
   const [guestEmail, setGuestEmail] = useState("");
+  const [buildingAddress, setBuildingAddress] = useState("");
   const [items, setItems] = useState<ReturnItem[]>([
     { id: "1", labelFile: null, labelPreview: null, deadline: null },
   ]);
@@ -73,8 +74,9 @@ export default function NewReturn() {
 
   const isValid = () => {
     const allItemsValid = items.every((item) => item.labelFile && item.deadline);
-    if (isGuest) return allItemsValid && guestEmail.includes("@");
-    return allItemsValid;
+    const hasAddress = buildingAddress.trim().length > 0;
+    if (isGuest) return allItemsValid && hasAddress && guestEmail.includes("@");
+    return allItemsValid && hasAddress;
   };
 
   const handleSubmit = async () => {
@@ -82,11 +84,9 @@ export default function NewReturn() {
     setIsSubmitting(true);
 
     try {
-      // Upload labels and create return records
       const returnIds: string[] = [];
 
       for (const item of items) {
-        // Upload label to storage (sanitize filename for storage)
         const safeName = item.labelFile!.name.replace(/[^a-zA-Z0-9._-]/g, "_");
         const fileName = `${Date.now()}-${safeName}`;
         const { error: uploadError } = await supabase.storage
@@ -99,12 +99,12 @@ export default function NewReturn() {
           .from("return-labels")
           .getPublicUrl(fileName);
 
-        // Create return record
         const insertData: any = {
           deadline: item.deadline!.toISOString().split("T")[0],
           label_url: urlData.publicUrl,
           status: "in_basket",
           service_fee: 5.0,
+          building_address: buildingAddress.trim(),
         };
 
         if (isGuest) {
@@ -187,6 +187,20 @@ export default function NewReturn() {
             />
           </div>
         )}
+
+        {/* Building Address */}
+        <div className="glass-card rounded-2xl p-4 mb-4 animate-fade-in-up">
+          <label className="text-muted-foreground text-sm mb-2 block">
+            Pickup address / building
+          </label>
+          <input
+            type="text"
+            value={buildingAddress}
+            onChange={(e) => setBuildingAddress(e.target.value)}
+            placeholder="123 Main St, Apt 4B, New York NY 10001"
+            className="w-full bg-secondary/30 border border-border rounded-xl py-3 px-4 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary transition-colors"
+          />
+        </div>
 
         {/* Return Items */}
         <div className="space-y-4">
