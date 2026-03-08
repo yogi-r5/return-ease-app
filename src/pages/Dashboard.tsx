@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Package, Plus, LogOut, ChevronRight } from "lucide-react";
+import { Package, Plus, LogOut, ChevronRight, CreditCard } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import ReturnStatusCard from "@/components/returns/ReturnStatusCard";
 
@@ -10,6 +10,7 @@ export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [returns, setReturns] = useState<any[]>([]);
+  const [payingId, setPayingId] = useState<string | null>(null);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -47,6 +48,31 @@ export default function Dashboard() {
     }
   };
 
+  const handleResumePayment = async (returnItem: any) => {
+    setPayingId(returnItem.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("create-payment", {
+        body: {
+          itemCount: 1,
+          returnIds: [returnItem.id],
+        },
+      });
+      if (error) throw error;
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error("No checkout URL received");
+      }
+    } catch (err: any) {
+      toast({
+        title: "Payment failed",
+        description: err.message || "Please try again",
+        variant: "destructive",
+      });
+      setPayingId(null);
+    }
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     toast({ title: "Signed out", description: "See you next time!" });
@@ -59,6 +85,9 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const unpaidReturns = returns.filter((r) => !r.paid);
+  const paidReturns = returns.filter((r) => r.paid);
 
   return (
     <div className="mesh-gradient min-h-screen px-6 py-8">
@@ -79,14 +108,41 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Returns List or Empty State */}
-        {returns.length > 0 ? (
+        {/* Unpaid Returns */}
+        {unpaidReturns.length > 0 && (
+          <div className="mb-6 animate-fade-in-up">
+            <h2 className="text-sm font-medium text-destructive mb-3 flex items-center gap-2">
+              <CreditCard className="w-4 h-4" /> Unpaid — Resume Payment
+            </h2>
+            <div className="space-y-3">
+              {unpaidReturns.map((r) => (
+                <div key={r.id} className="glass-card rounded-2xl p-4">
+                  <ReturnStatusCard returnItem={r} />
+                  <button
+                    onClick={() => handleResumePayment(r)}
+                    disabled={payingId === r.id}
+                    className="auth-btn-primary w-full mt-3 !py-3 text-sm disabled:opacity-50"
+                  >
+                    {payingId === r.id ? (
+                      <div className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />
+                    ) : (
+                      <span>Pay ${r.service_fee || 5}.00</span>
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Paid Returns */}
+        {paidReturns.length > 0 ? (
           <div className="space-y-3 animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
-            {returns.map((r) => (
+            {paidReturns.map((r) => (
               <ReturnStatusCard key={r.id} returnItem={r} />
             ))}
           </div>
-        ) : (
+        ) : unpaidReturns.length === 0 ? (
           <div
             className="glass-card rounded-3xl p-8 text-center animate-fade-in-up"
             style={{ animationDelay: "0.1s" }}
@@ -108,7 +164,7 @@ export default function Dashboard() {
               <span>New Return</span>
             </button>
           </div>
-        )}
+        ) : null}
 
         {/* Quick Actions */}
         <div className="mt-6 space-y-3 animate-fade-in-up" style={{ animationDelay: "0.2s" }}>

@@ -7,6 +7,8 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import NewReturn from "./pages/NewReturn";
 import Success from "./pages/Success";
+import Admin from "./pages/Admin";
+import DriverBatch from "./pages/DriverBatch";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -22,6 +24,8 @@ const App = () => (
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/new-return" element={<NewReturn />} />
           <Route path="/success" element={<Success />} />
+          <Route path="/admin" element={<Admin />} />
+          <Route path="/driver/:token" element={<DriverBatch />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
