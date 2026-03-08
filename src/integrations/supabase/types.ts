@@ -14,7 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      returns: {
+        Row: {
+          created_at: string
+          deadline: string
+          guest_email: string | null
+          id: string
+          label_url: string | null
+          paid: boolean
+          service_fee: number
+          status: Database["public"]["Enums"]["return_status"]
+          stripe_payment_intent_id: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          deadline: string
+          guest_email?: string | null
+          id?: string
+          label_url?: string | null
+          paid?: boolean
+          service_fee?: number
+          status?: Database["public"]["Enums"]["return_status"]
+          stripe_payment_intent_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          deadline?: string
+          guest_email?: string | null
+          id?: string
+          label_url?: string | null
+          paid?: boolean
+          service_fee?: number
+          status?: Database["public"]["Enums"]["return_status"]
+          stripe_payment_intent_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +64,11 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      return_status:
+        | "in_basket"
+        | "courier_assigned"
+        | "en_route"
+        | "dropped_off"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +195,13 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      return_status: [
+        "in_basket",
+        "courier_assigned",
+        "en_route",
+        "dropped_off",
+      ],
+    },
   },
 } as const
