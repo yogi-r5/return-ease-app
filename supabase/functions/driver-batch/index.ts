@@ -17,7 +17,7 @@ serve(async (req) => {
   );
 
   try {
-    const { token } = await req.json();
+    const { token, action } = await req.json();
 
     if (!token || typeof token !== "string") {
       return new Response(JSON.stringify({ error: "Invalid token" }), {
@@ -48,6 +48,65 @@ serve(async (req) => {
 
     const returnIds = (batchReturns || []).map((br: any) => br.return_id);
 
+    // Handle actions
+    if (action === "confirm_pickup" && returnIds.length > 0) {
+      await supabase
+        .from("returns")
+        .update({ status: "en_route" })
+        .in("id", returnIds);
+
+      await supabase
+        .from("delivery_batches")
+        .update({ status: "en_route" })
+        .eq("id", batch.id);
+
+      // Send notifications for each return
+      for (const rid of returnIds) {
+        try {
+          await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-notification`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+            },
+            body: JSON.stringify({ type: "status_update", returnId: rid }),
+          });
+        } catch (_) { /* notification failure shouldn't block */ }
+      }
+    }
+
+    if (action === "confirm_dropoff" && returnIds.length > 0) {
+      await supabase
+        .from("returns")
+        .update({ status: "dropped_off" })
+        .in("id", returnIds);
+
+      await supabase
+        .from("delivery_batches")
+        .update({ status: "completed" })
+        .eq("id", batch.id);
+
+      for (const rid of returnIds) {
+        try {
+          await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-notification`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+            },
+            body: JSON.stringify({ type: "status_update", returnId: rid }),
+          });
+        } catch (_) { /* notification failure shouldn't block */ }
+      }
+    }
+
+    // Re-fetch batch and returns after action
+    const { data: updatedBatch } = await supabase
+      .from("delivery_batches")
+      .select("*")
+      .eq("id", batch.id)
+      .single();
+
     let returns: any[] = [];
     if (returnIds.length > 0) {
       const { data } = await supabase
@@ -57,7 +116,7 @@ serve(async (req) => {
       returns = data || [];
     }
 
-    return new Response(JSON.stringify({ batch, returns }), {
+    return new Response(JSON.stringify({ batch: updatedBatch || batch, returns }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: any) {
