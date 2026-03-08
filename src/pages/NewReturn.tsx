@@ -1,23 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft, Upload, Calendar, Plus, X } from "lucide-react";
-import { format } from "date-fns";
+import { ArrowLeft, Plus } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { Calendar as CalendarPicker } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
-
-interface ReturnItem {
-  id: string;
-  labelFile: File | null;
-  labelPreview: string | null;
-  deadline: Date | null;
-}
+import ReturnItemForm, { type ReturnItem } from "@/components/returns/ReturnItemForm";
 
 export default function NewReturn() {
   const navigate = useNavigate();
@@ -57,6 +43,14 @@ export default function NewReturn() {
     reader.readAsDataURL(file);
   };
 
+  const handleFileRemove = (itemId: string) => {
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === itemId ? { ...i, labelFile: null, labelPreview: null } : i
+      )
+    );
+  };
+
   const handleDateSelect = (itemId: string, date: Date | undefined) => {
     setItems((prev) =>
       prev.map((item) =>
@@ -68,12 +62,7 @@ export default function NewReturn() {
   const addAnotherItem = () => {
     setItems((prev) => [
       ...prev,
-      {
-        id: String(Date.now()),
-        labelFile: null,
-        labelPreview: null,
-        deadline: null,
-      },
+      { id: String(Date.now()), labelFile: null, labelPreview: null, deadline: null },
     ]);
   };
 
@@ -84,31 +73,83 @@ export default function NewReturn() {
 
   const isValid = () => {
     const allItemsValid = items.every((item) => item.labelFile && item.deadline);
-    if (isGuest) {
-      return allItemsValid && guestEmail.includes("@");
-    }
+    if (isGuest) return allItemsValid && guestEmail.includes("@");
     return allItemsValid;
   };
 
   const handleSubmit = async () => {
     if (!isValid()) return;
-
     setIsSubmitting(true);
-    // Simulate payment processing
-    await new Promise((resolve) => setTimeout(resolve, 1500));
 
-    toast({
-      title: "Return Confirmed!",
-      description: `${items.length} item${items.length > 1 ? "s" : ""} added to your basket`,
-    });
+    try {
+      // Upload labels and create return records
+      const returnIds: string[] = [];
 
-    if (isGuest) {
-      navigate("/success?guest=true");
-    } else {
-      navigate("/dashboard");
+      for (const item of items) {
+        // Upload label to storage
+        const fileName = `${Date.now()}-${item.labelFile!.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from("return-labels")
+          .upload(fileName, item.labelFile!);
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from("return-labels")
+          .getPublicUrl(fileName);
+
+        // Create return record
+        const insertData: any = {
+          deadline: item.deadline!.toISOString().split("T")[0],
+          label_url: urlData.publicUrl,
+          status: "in_basket",
+          service_fee: 5.0,
+        };
+
+        if (isGuest) {
+          insertData.guest_email = guestEmail;
+        } else {
+          insertData.user_id = user.id;
+        }
+
+        const { data: returnData, error: insertError } = await supabase
+          .from("returns")
+          .insert(insertData)
+          .select("id")
+          .single();
+
+        if (insertError) throw insertError;
+        returnIds.push(returnData.id);
+      }
+
+      // Create Stripe checkout session
+      const { data: paymentData, error: paymentError } = await supabase.functions.invoke(
+        "create-payment",
+        {
+          body: {
+            itemCount: items.length,
+            returnIds,
+            guestEmail: isGuest ? guestEmail : undefined,
+          },
+        }
+      );
+
+      if (paymentError) throw paymentError;
+
+      if (paymentData?.url) {
+        window.location.href = paymentData.url;
+      } else {
+        throw new Error("No checkout URL received");
+      }
+    } catch (error: any) {
+      console.error("Submit error:", error);
+      toast({
+        title: "Something went wrong",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+      setIsSubmitting(false);
     }
-
-    setIsSubmitting(false);
   };
 
   return (
@@ -118,13 +159,13 @@ export default function NewReturn() {
         <div className="flex items-center gap-4 mb-8 animate-fade-in">
           <button
             onClick={() => navigate(isGuest ? "/" : "/dashboard")}
-            className="p-2 text-white/50 hover:text-white/80 transition-colors"
+            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-2xl font-semibold text-white">New Return</h1>
-            <p className="text-white/50 text-sm mt-1">
+            <h1 className="text-2xl font-semibold text-foreground">New Return</h1>
+            <p className="text-muted-foreground text-sm mt-1">
               {isGuest ? "Guest checkout" : "Add items to your basket"}
             </p>
           </div>
@@ -133,7 +174,7 @@ export default function NewReturn() {
         {/* Guest Email */}
         {isGuest && (
           <div className="glass-card rounded-2xl p-4 mb-4 animate-fade-in-up">
-            <label className="text-white/60 text-sm mb-2 block">
+            <label className="text-muted-foreground text-sm mb-2 block">
               Email for receipt
             </label>
             <input
@@ -141,7 +182,7 @@ export default function NewReturn() {
               value={guestEmail}
               onChange={(e) => setGuestEmail(e.target.value)}
               placeholder="you@email.com"
-              className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-white placeholder:text-white/30 focus:outline-none focus:border-teal-vibrant transition-colors"
+              className="w-full bg-secondary/30 border border-border rounded-xl py-3 px-4 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary transition-colors"
             />
           </div>
         )}
@@ -149,110 +190,23 @@ export default function NewReturn() {
         {/* Return Items */}
         <div className="space-y-4">
           {items.map((item, index) => (
-            <div
+            <ReturnItemForm
               key={item.id}
-              className="glass-card rounded-3xl p-5 animate-fade-in-up"
-              style={{ animationDelay: `${index * 0.1}s` }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-white/60 text-sm">
-                  Item {index + 1}
-                </span>
-                {items.length > 1 && (
-                  <button
-                    onClick={() => removeItem(item.id)}
-                    className="p-1 text-white/30 hover:text-white/60 transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Label Upload */}
-              <div className="mb-4">
-                <label className="text-white text-sm font-medium mb-2 block">
-                  Return Label
-                </label>
-                {item.labelPreview ? (
-                  <div className="relative rounded-2xl overflow-hidden bg-white/5">
-                    <img
-                      src={item.labelPreview}
-                      alt="Label preview"
-                      className="w-full h-40 object-cover"
-                    />
-                    <button
-                      onClick={() =>
-                        setItems((prev) =>
-                          prev.map((i) =>
-                            i.id === item.id
-                              ? { ...i, labelFile: null, labelPreview: null }
-                              : i
-                          )
-                        )
-                      }
-                      className="absolute top-2 right-2 p-2 bg-black/50 rounded-full text-white/70 hover:text-white transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <label className="flex flex-col items-center justify-center h-40 border-2 border-dashed border-white/20 rounded-2xl cursor-pointer hover:border-teal-vibrant/50 transition-colors">
-                    <Upload className="w-8 h-8 text-white/40 mb-2" />
-                    <span className="text-white/50 text-sm">
-                      Drop or tap to upload
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleFileUpload(item.id, file);
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
-
-              {/* Deadline Picker */}
-              <div>
-                <label className="text-white text-sm font-medium mb-2 block">
-                  Last Day to Return
-                </label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      className={cn(
-                        "w-full flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-left hover:border-white/20 transition-colors",
-                        !item.deadline && "text-white/30"
-                      )}
-                    >
-                      <Calendar className="w-5 h-5 text-teal-light" />
-                      {item.deadline
-                        ? format(item.deadline, "PPP")
-                        : "Select deadline"}
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0 bg-card border-white/10" align="start">
-                    <CalendarPicker
-                      mode="single"
-                      selected={item.deadline || undefined}
-                      onSelect={(date) => handleDateSelect(item.id, date)}
-                      disabled={(date) => date < new Date()}
-                      initialFocus
-                      className="p-3 pointer-events-auto"
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
+              item={item}
+              index={index}
+              canRemove={items.length > 1}
+              onFileUpload={handleFileUpload}
+              onFileRemove={handleFileRemove}
+              onDateSelect={handleDateSelect}
+              onRemove={removeItem}
+            />
           ))}
         </div>
 
         {/* Add Another */}
         <button
           onClick={addAnotherItem}
-          className="w-full mt-4 py-3 border border-dashed border-white/20 rounded-2xl text-white/50 hover:text-white/80 hover:border-white/40 transition-colors flex items-center justify-center gap-2 animate-fade-in"
+          className="w-full mt-4 py-3 border border-dashed border-border rounded-2xl text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors flex items-center justify-center gap-2 animate-fade-in"
         >
           <Plus className="w-4 h-4" />
           Add another item
@@ -261,8 +215,8 @@ export default function NewReturn() {
         {/* Payment Section */}
         <div className="glass-card rounded-3xl p-5 mt-6 animate-fade-in-up" style={{ animationDelay: "0.3s" }}>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-white/60">Service fee</span>
-            <span className="text-white font-medium">
+            <span className="text-muted-foreground">Service fee</span>
+            <span className="text-foreground font-medium">
               ${items.length * 5}.00
             </span>
           </div>
@@ -272,13 +226,13 @@ export default function NewReturn() {
             className="auth-btn-primary w-full disabled:opacity-50"
           >
             {isSubmitting ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-5 h-5 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />
             ) : (
               <span>Pay & Submit Return</span>
             )}
           </button>
-          <p className="text-center text-white/30 text-xs mt-3">
-            Payment secured by Stripe
+          <p className="text-center text-muted-foreground/50 text-xs mt-3">
+            Secure checkout via Stripe · Apple Pay · Google Pay · Cards
           </p>
         </div>
       </div>
