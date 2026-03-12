@@ -83,6 +83,7 @@ export type Database = {
           id: string
           label_url: string | null
           paid: boolean
+          room_number: string | null
           service_fee: number
           status: Database["public"]["Enums"]["return_status"]
           stripe_payment_intent_id: string | null
@@ -97,6 +98,7 @@ export type Database = {
           id?: string
           label_url?: string | null
           paid?: boolean
+          room_number?: string | null
           service_fee?: number
           status?: Database["public"]["Enums"]["return_status"]
           stripe_payment_intent_id?: string | null
@@ -111,6 +113,7 @@ export type Database = {
           id?: string
           label_url?: string | null
           paid?: boolean
+          room_number?: string | null
           service_fee?: number
           status?: Database["public"]["Enums"]["return_status"]
           stripe_payment_intent_id?: string | null

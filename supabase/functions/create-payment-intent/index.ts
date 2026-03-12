@@ -1,3 +1,14 @@
+/**
+ * create-payment-intent
+ *
+ * Creates a Stripe PaymentIntent for the Express Checkout flow
+ * (Apple Pay / Google Pay). The amount is always $5.00 flat —
+ * regardless of how many returns (1–5) are in the order.
+ *
+ * Called by the browser immediately after the user authorises
+ * payment in the native wallet sheet.
+ */
+
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
@@ -19,9 +30,14 @@ serve(async (req) => {
   );
 
   try {
-    // itemCount is now ignored for pricing — we always charge $5 flat.
-    // It is kept in the body for backwards-compatibility.
     const { returnIds, guestEmail } = await req.json();
+
+    if (!returnIds || returnIds.length === 0) {
+      return new Response(JSON.stringify({ error: "returnIds is required" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
       apiVersion: "2025-08-27.basil",
@@ -30,7 +46,7 @@ serve(async (req) => {
     let customerEmail: string | undefined = guestEmail;
     let userId: string | null = null;
 
-    // Try to get authenticated user
+    // Try to identify authenticated user from the Bearer token
     const authHeader = req.headers.get("Authorization");
     if (authHeader) {
       const token = authHeader.replace("Bearer ", "");
@@ -41,7 +57,7 @@ serve(async (req) => {
       }
     }
 
-    // Reuse existing Stripe customer when possible
+    // Re-use existing Stripe customer when possible
     let customerId: string | undefined;
     if (customerEmail) {
       const customers = await stripe.customers.list({ email: customerEmail, limit: 1 });
@@ -50,40 +66,28 @@ serve(async (req) => {
       }
     }
 
-    // Build cancel URL — send guests back to guest flow
-    const origin = req.headers.get("origin") ?? "";
-    const cancelUrl = guestEmail
-      ? `${origin}/new-return?guest=true`
-      : `${origin}/new-return`;
-
-    const session = await stripe.checkout.sessions.create({
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: 500, // $5.00 USD — flat fee for up to 5 returns
+      currency: "usd",
       customer: customerId,
-      customer_email: customerId ? undefined : customerEmail,
-      line_items: [
-        {
-          // One fixed unit = $5 flat, regardless of how many returns (1–5)
-          price: Deno.env.get("STRIPE_PRICE_ID") || "price_1T8n1Q1QxTk94yXEM8rVqhzX",
-          quantity: 1,
-        },
-      ],
-      mode: "payment",
-      success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}&return_ids=${(returnIds || []).join(",")}`,
-      cancel_url: cancelUrl,
+      receipt_email: customerEmail,
       metadata: {
-        return_ids: (returnIds || []).join(","),
+        return_ids: (returnIds as string[]).join(","),
         user_id: userId ?? "",
       },
-      // automatic_payment_methods enables Apple Pay, Google Pay, Link, and
-      // all other wallets that Stripe supports for this customer / device.
+      // Allow card (covers Apple Pay & Google Pay tokenised cards) and Link
       automatic_payment_methods: { enabled: true },
     });
 
-    return new Response(JSON.stringify({ url: session.url }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
+    return new Response(
+      JSON.stringify({ clientSecret: paymentIntent.client_secret }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      }
+    );
   } catch (error: any) {
-    console.error("create-payment error:", error);
+    console.error("create-payment-intent error:", error);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,
