@@ -1,11 +1,16 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft, Plus, CreditCard, Lock } from "lucide-react";
+import { ArrowLeft, Plus, Lock } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import ReturnItemForm, { type ReturnItem } from "@/components/returns/ReturnItemForm";
 import { loadStripe } from "@stripe/stripe-js";
-import { Elements, PaymentRequestButtonElement, useStripe } from "@stripe/react-stripe-js";
+import {
+  Elements,
+  ExpressCheckoutElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
 
 const MAX_ITEMS = 5;
 const SERVICE_FEE = 5.0;
@@ -14,56 +19,108 @@ const MAX_FILE_SIZE_MB = 20;
 // Load Stripe once at module level
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "");
 
-// ─── Express Checkout Button (must live inside <Elements>) ───────────────────
-interface ExpressCheckoutButtonProps {
+// Elements options — deferred intent mode: amount/currency set here,
+// actual PaymentIntent is created server-side inside onConfirm.
+const ELEMENTS_OPTIONS = {
+  mode: "payment" as const,
+  amount: 500, // $5.00 in cents
+  currency: "usd",
+  appearance: {
+    theme: "night" as const,
+    variables: { borderRadius: "12px" },
+  },
+};
+
+// ─── Express Checkout inner component (must live inside <Elements>) ───────────
+interface ExpressButtonProps {
   isFormValid: boolean;
-  onExpressPayment: (ev: any) => Promise<void>;
+  onCreateReturns: () => Promise<string[]>;
+  guestEmail: string;
+  isGuest: boolean;
+  onSubmitting: (v: boolean) => void;
 }
 
-function ExpressCheckoutButton({ isFormValid, onExpressPayment }: ExpressCheckoutButtonProps) {
+function ExpressButton({
+  isFormValid,
+  onCreateReturns,
+  guestEmail,
+  isGuest,
+  onSubmitting,
+}: ExpressButtonProps) {
   const stripe = useStripe();
-  const [paymentRequest, setPaymentRequest] = useState<any>(null);
+  const elements = useElements();
+  const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!stripe) return;
+  const handleConfirm = async () => {
+    if (!stripe || !elements) return;
 
-    const pr = stripe.paymentRequest({
-      country: "US",
-      currency: "usd",
-      total: {
-        label: "Returnee – Up to 5 Returns",
-        amount: 500, // Always $5.00
-      },
-      requestPayerName: false,
-      requestPayerEmail: false,
-    });
+    if (!isFormValid) {
+      toast({
+        title: "Please complete the form first",
+        description: "Add your address, return labels, and deadlines.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    pr.canMakePayment().then((result: any) => {
-      if (result) setPaymentRequest(pr);
-    });
+    onSubmitting(true);
+    try {
+      // Step 1: Validate/freeze the express checkout data
+      const { error: submitError } = await elements.submit();
+      if (submitError) throw new Error(submitError.message);
 
-    pr.on("paymentmethod", async (ev: any) => {
-      await onExpressPayment(ev);
-    });
+      // Step 2: Upload files + create DB records (paid=false)
+      const returnIds = await onCreateReturns();
 
-    return () => {
-      pr.off("paymentmethod");
-    };
-  }, [stripe]); // eslint-disable-line react-hooks/exhaustive-deps
+      // Step 3: Create PaymentIntent server-side ($5 flat)
+      const { data: intentData, error: intentError } = await supabase.functions.invoke(
+        "create-payment-intent",
+        { body: { returnIds, guestEmail: isGuest ? guestEmail : undefined } }
+      );
+      if (intentError) throw new Error(intentError.message);
 
-  if (!paymentRequest) return null;
+      // Step 4: Confirm with Apple Pay / Google Pay (native sheet)
+      const result = await stripe.confirmPayment({
+        elements,
+        clientSecret: intentData.clientSecret,
+        confirmParams: {
+          return_url: `${window.location.origin}/success`,
+        },
+        redirect: "if_required",
+      });
+
+      if (result.error) throw new Error(result.error.message);
+
+      // Step 5: Payment succeeded — navigate to success page
+      // (only reached when no redirect needed, typical for Apple/Google Pay)
+      if (result.paymentIntent) {
+        navigate(
+          `/success?payment_intent_id=${result.paymentIntent.id}&return_ids=${returnIds.join(",")}`
+        );
+      }
+    } catch (error: any) {
+      console.error("Express payment error:", error);
+      toast({
+        title: "Payment failed",
+        description: error.message || "Please try again.",
+        variant: "destructive",
+      });
+      onSubmitting(false);
+    }
+  };
 
   return (
     <div className="mb-5 animate-fade-in-up">
-      <PaymentRequestButtonElement
+      <ExpressCheckoutElement
+        onConfirm={handleConfirm}
         options={{
-          paymentRequest,
-          style: {
-            paymentRequestButton: {
-              type: "default",
-              theme: "dark",
-              height: "52px",
-            },
+          buttonHeight: 52,
+          buttonType: { applePay: "buy", googlePay: "buy" },
+          buttonTheme: { applePay: "black", googlePay: "black" },
+          paymentMethods: {
+            applePay: "auto",
+            googlePay: "auto",
+            link: "never",
           },
         }}
       />
@@ -78,7 +135,7 @@ function ExpressCheckoutButton({ isFormValid, onExpressPayment }: ExpressCheckou
   );
 }
 
-// ─── Main Component ──────────────────────────────────────────────────────────
+// ─── Main Page Component ──────────────────────────────────────────────────────
 export default function NewReturn() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -96,18 +153,14 @@ export default function NewReturn() {
   useEffect(() => {
     if (!isGuest) {
       supabase.auth.getSession().then(({ data: { session } }) => {
-        if (!session) {
-          navigate("/");
-        } else {
-          setUser(session.user);
-        }
+        if (!session) navigate("/");
+        else setUser(session.user);
       });
     }
   }, [isGuest, navigate]);
 
-  // ── File handlers ──────────────────────────────────────────────────────────
+  // ── File handlers ────────────────────────────────────────────────────────────
   const handleFileUpload = (itemId: string, file: File) => {
-    // Validate file size
     if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
       toast({
         title: "File too large",
@@ -116,7 +169,6 @@ export default function NewReturn() {
       });
       return;
     }
-
     const reader = new FileReader();
     reader.onloadend = () => {
       setItems((prev) =>
@@ -132,9 +184,7 @@ export default function NewReturn() {
 
   const handleFileRemove = (itemId: string) => {
     setItems((prev) =>
-      prev.map((i) =>
-        i.id === itemId ? { ...i, labelFile: null, labelPreview: null } : i
-      )
+      prev.map((i) => (i.id === itemId ? { ...i, labelFile: null, labelPreview: null } : i))
     );
   };
 
@@ -165,7 +215,7 @@ export default function NewReturn() {
     setItems((prev) => prev.filter((item) => item.id !== itemId));
   };
 
-  // ── Validation ─────────────────────────────────────────────────────────────
+  // ── Validation ───────────────────────────────────────────────────────────────
   const isValid = () => {
     const allItemsValid = items.every((item) => item.labelFile && item.deadline);
     const hasAddress = buildingAddress.trim().length > 0;
@@ -173,19 +223,16 @@ export default function NewReturn() {
     return allItemsValid && hasAddress;
   };
 
-  // ── Shared: upload files + create DB records ───────────────────────────────
+  // ── Shared: upload files + create DB records (used by both payment flows) ────
   const uploadAndCreateReturns = async (): Promise<string[]> => {
     const returnIds: string[] = [];
-
     for (const item of items) {
-      // Sanitise filename to prevent path traversal
       const safeName = item.labelFile!.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`;
 
       const { error: uploadError } = await supabase.storage
         .from("return-labels")
         .upload(fileName, item.labelFile!);
-
       if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
       const { data: urlData } = supabase.storage
@@ -212,22 +259,18 @@ export default function NewReturn() {
         .insert(insertData)
         .select("id")
         .single();
-
       if (insertError) throw new Error(`Failed to create return: ${insertError.message}`);
       returnIds.push(returnData.id);
     }
-
     return returnIds;
   };
 
-  // ── Standard checkout → Stripe hosted page ─────────────────────────────────
+  // ── Standard checkout → Stripe hosted Checkout page ─────────────────────────
   const handleSubmit = async () => {
     if (!isValid()) return;
     setIsSubmitting(true);
-
     try {
       const returnIds = await uploadAndCreateReturns();
-
       const { data: paymentData, error: paymentError } = await supabase.functions.invoke(
         "create-payment",
         {
@@ -238,9 +281,7 @@ export default function NewReturn() {
           },
         }
       );
-
       if (paymentError) throw new Error(paymentError.message);
-
       if (paymentData?.url) {
         window.location.href = paymentData.url;
       } else {
@@ -257,85 +298,12 @@ export default function NewReturn() {
     }
   };
 
-  // ── Express checkout → Apple Pay / Google Pay ──────────────────────────────
-  const handleExpressPayment = async (ev: any) => {
-    if (!isValid()) {
-      ev.complete("fail");
-      toast({
-        title: "Please fill in all fields",
-        description: "Add your address, labels, and deadlines first.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    try {
-      // Step 1: Upload files + create returns in DB
-      const returnIds = await uploadAndCreateReturns();
-
-      // Step 2: Create PaymentIntent for $5 flat
-      const { data: intentData, error: intentError } = await supabase.functions.invoke(
-        "create-payment-intent",
-        {
-          body: {
-            returnIds,
-            guestEmail: isGuest ? guestEmail : undefined,
-          },
-        }
-      );
-
-      if (intentError) throw new Error(intentError.message);
-
-      // Step 3: Confirm PaymentIntent with Apple Pay / Google Pay payment method
-      const stripe = await stripePromise;
-      if (!stripe) throw new Error("Stripe not loaded");
-
-      const { paymentIntent, error: confirmError } = await stripe.confirmCardPayment(
-        intentData.clientSecret,
-        { payment_method: ev.paymentMethod.id },
-        { handleActions: false }
-      );
-
-      if (confirmError) {
-        ev.complete("fail");
-        throw new Error(confirmError.message);
-      }
-
-      // Handle 3D Secure if needed (rare for Apple/Google Pay)
-      if (paymentIntent?.status === "requires_action") {
-        const { error: actionError } = await stripe.confirmCardPayment(intentData.clientSecret);
-        if (actionError) {
-          ev.complete("fail");
-          throw new Error(actionError.message);
-        }
-      }
-
-      ev.complete("success");
-
-      // Step 4: Navigate to success with payment info
-      navigate(
-        `/success?payment_intent_id=${paymentIntent?.id}&return_ids=${returnIds.join(",")}`
-      );
-    } catch (error: any) {
-      console.error("Express payment error:", error);
-      ev.complete("fail");
-      toast({
-        title: "Payment failed",
-        description: error.message || "Please try again",
-        variant: "destructive",
-      });
-      setIsSubmitting(false);
-    }
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="mesh-gradient min-h-screen px-6 py-8">
       <div className="max-w-lg mx-auto">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="flex items-center gap-4 mb-8 animate-fade-in">
           <button
             onClick={() => navigate(isGuest ? "/" : "/dashboard")}
@@ -351,7 +319,7 @@ export default function NewReturn() {
           </div>
         </div>
 
-        {/* ── Guest Email ── */}
+        {/* Guest Email */}
         {isGuest && (
           <div className="glass-card rounded-2xl p-4 mb-4 animate-fade-in-up">
             <label className="text-muted-foreground text-sm mb-2 block">
@@ -368,11 +336,9 @@ export default function NewReturn() {
           </div>
         )}
 
-        {/* ── Pickup Address ── */}
+        {/* Pickup Address */}
         <div className="glass-card rounded-2xl p-4 mb-4 animate-fade-in-up">
-          <label className="text-muted-foreground text-sm mb-2 block">
-            Building address
-          </label>
+          <label className="text-muted-foreground text-sm mb-2 block">Building address</label>
           <input
             type="text"
             value={buildingAddress}
@@ -381,7 +347,6 @@ export default function NewReturn() {
             autoComplete="street-address"
             className="w-full bg-secondary/30 border border-border rounded-xl py-3 px-4 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary transition-colors"
           />
-
           <label className="text-muted-foreground text-sm mt-3 mb-2 block">
             Room / Unit / Apt no.
           </label>
@@ -395,7 +360,7 @@ export default function NewReturn() {
           />
         </div>
 
-        {/* ── Return Items ── */}
+        {/* Return Items */}
         <div className="space-y-4">
           {items.map((item, index) => (
             <ReturnItemForm
@@ -411,7 +376,7 @@ export default function NewReturn() {
           ))}
         </div>
 
-        {/* ── Add Another Item ── */}
+        {/* Add Another Item */}
         {items.length < MAX_ITEMS ? (
           <button
             onClick={addAnotherItem}
@@ -426,7 +391,7 @@ export default function NewReturn() {
           </p>
         )}
 
-        {/* ── Payment Section ── */}
+        {/* Payment Section */}
         <div
           className="glass-card rounded-3xl p-5 mt-6 animate-fade-in-up"
           style={{ animationDelay: "0.3s" }}
@@ -440,11 +405,14 @@ export default function NewReturn() {
             Flat ${SERVICE_FEE.toFixed(0)} — covers up to {MAX_ITEMS} returns per order
           </p>
 
-          {/* Express Checkout (Apple Pay / Google Pay) */}
-          <Elements stripe={stripePromise}>
-            <ExpressCheckoutButton
+          {/* Express Checkout — Apple Pay / Google Pay (auto-shown when supported) */}
+          <Elements stripe={stripePromise} options={ELEMENTS_OPTIONS}>
+            <ExpressButton
               isFormValid={isValid()}
-              onExpressPayment={handleExpressPayment}
+              onCreateReturns={uploadAndCreateReturns}
+              guestEmail={guestEmail}
+              isGuest={isGuest}
+              onSubmitting={setIsSubmitting}
             />
           </Elements>
 
