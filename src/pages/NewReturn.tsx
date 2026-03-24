@@ -25,6 +25,7 @@ const ELEMENTS_OPTIONS = {
   mode: "payment" as const,
   amount: 500, // $5.00 in cents
   currency: "usd",
+  paymentMethodTypes: ["card"],
   appearance: {
     theme: "night" as const,
     variables: { borderRadius: "12px" },
