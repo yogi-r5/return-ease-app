@@ -75,7 +75,6 @@ serve(async (req) => {
       },
       // automatic_payment_methods enables Apple Pay, Google Pay, Link, and
       // all other wallets that Stripe supports for this customer / device.
-      automatic_payment_methods: { enabled: true },
     });
 
     return new Response(JSON.stringify({ url: session.url }), {
