@@ -75,8 +75,6 @@ serve(async (req) => {
         return_ids: (returnIds as string[]).join(","),
         user_id: userId ?? "",
       },
-      // Allow card (covers Apple Pay & Google Pay tokenised cards) and Link
-      automatic_payment_methods: { enabled: true },
     });
 
     return new Response(
