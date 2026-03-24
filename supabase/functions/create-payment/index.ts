@@ -59,9 +59,9 @@ serve(async (req) => {
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       customer_email: customerId ? undefined : customerEmail,
+      payment_method_types: ["card"],
       line_items: [
         {
-          // One fixed unit = $5 flat, regardless of how many returns (1–5)
           price: Deno.env.get("STRIPE_PRICE_ID") || "price_1T8n1Q1QxTk94yXEM8rVqhzX",
           quantity: 1,
         },
@@ -73,8 +73,6 @@ serve(async (req) => {
         return_ids: (returnIds || []).join(","),
         user_id: userId ?? "",
       },
-      // automatic_payment_methods enables Apple Pay, Google Pay, Link, and
-      // all other wallets that Stripe supports for this customer / device.
     });
 
     return new Response(JSON.stringify({ url: session.url }), {
